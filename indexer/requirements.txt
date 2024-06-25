@@ -16,3 +16,6 @@ httpx==0.25.2
 tqdm
 pytoniq-core
 pymongo
+msgpack
+contextvars
+redis
