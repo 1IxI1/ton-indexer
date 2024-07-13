@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from time import sleep
@@ -6,7 +8,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy_utils import create_database, database_exists
+from sqlalchemy_utils import create_database, database_exists, CompositeType
 
 from sqlalchemy import Column, String, Integer, BigInteger, Boolean, Index, Enum, Numeric
 from sqlalchemy.schema import ForeignKeyConstraint
@@ -37,9 +39,9 @@ settings = Settings()
 # async engine
 def get_engine(settings: Settings):
     logger.critical(settings.pg_dsn)
-    engine = create_async_engine(settings.pg_dsn, 
-                                 pool_size=128, 
-                                 max_overflow=24, 
+    engine = create_async_engine(settings.pg_dsn,
+                                 pool_size=128,
+                                 max_overflow=24,
                                  pool_timeout=128,
                                  echo=False)
     return engine
@@ -50,9 +52,9 @@ SessionMaker = sessionmaker(bind=engine, class_=AsyncSession)
 def get_sync_engine(settings: Settings):
     dsn = settings.pg_dsn.replace('+asyncpg', '+psycopg2')
     logger.critical(dsn)
-    engine = create_engine(dsn, 
-                           pool_size=128, 
-                           max_overflow=24, 
+    engine = create_engine(dsn,
+                           pool_size=128,
+                           max_overflow=24,
                            pool_timeout=128,
                            echo=False)
     return engine
@@ -102,8 +104,8 @@ class Block(Base):
     mc_block_shard: str = Column(BigInteger, nullable=True)
     mc_block_seqno: int = Column(Integer, nullable=True)
 
-    masterchain_block = relationship("Block", 
-                                     remote_side=[workchain, shard, seqno], 
+    masterchain_block = relationship("Block",
+                                     remote_side=[workchain, shard, seqno],
                                      backref='shard_blocks')
 
     global_id: int = Column(Integer)
@@ -137,13 +139,14 @@ class Event(Base):
     id: int = Column(BigInteger, primary_key=True)
     meta: Dict[str, Any] = Column(JSONB)
     processed: bool = Column(Boolean, default=False)
-    
+
     # transactions: List["EventTransaction"] = relationship("EventTransaction", back_populates="event")
-    transactions: List["Transaction"] = relationship("Transaction", 
+    transactions: List["Transaction"] = relationship("Transaction",
                                                      foreign_keys=[id],
                                                      primaryjoin='Event.id == Transaction.event_id',
                                                      uselist=True,
                                                      viewonly=True)
+    actions: List["Action"] = relationship("Action", back_populates="event")
     edges: List["EventEdge"] = relationship("EventEdge", back_populates="event")
 
 
@@ -163,6 +166,61 @@ class EventEdge(Base):
     right_tx_hash: str = Column(String, primary_key=True)
 
     event: "Event" = relationship("Event", back_populates="edges")
+
+
+class Action(Base):
+    __tablename__ = 'actions'
+
+    action_id: str = Column(String(64), primary_key=True)
+    type: str = Column(String())
+    trace_id: int = Column(BigInteger, ForeignKey('events.id'), nullable=False)
+    tx_hashes: list[str] = Column(ARRAY(String()))
+    value: int = Column(Numeric)
+    start_lt: int | None = Column(BigInteger)
+    end_lt: int | None = Column(BigInteger)
+    start_utime: int | None = Column(BigInteger)
+    end_utime: int | None = Column(BigInteger)
+    source: str | None = Column(String(70))
+    source_secondary: str | None = Column(String(70))
+    destination: str | None = Column(String(70))
+    destination_secondary: str | None = Column(String(70))
+    asset: str | None = Column(String(70))
+    asset_secondary: str | None = Column(String(70))
+    asset2: str | None = Column(String(70))
+    asset2_secondary: str | None = Column(String(70))
+    opcode: int | None = Column(BigInteger)
+    success: bool = Column(Boolean)
+    ton_transfer_data = Column(CompositeType("ton_transfer_details", [
+        Column("content", String),
+        Column("encrypted", Boolean)
+    ]))
+    jetton_transfer_data = Column(CompositeType("jetton_transfer_details", [
+        Column("response_address", String),
+        Column("forward_amount", BigInteger),
+        Column("query_id", Numeric)
+    ]))
+    nft_transfer_data = Column(CompositeType("nft_transfer_details", [
+        Column("is_purchase", Boolean),
+        Column("price", BigInteger),
+        Column("query_id", Numeric)
+    ]))
+    jetton_swap_data = Column(CompositeType("jetton_swap_details", [
+        Column("dex", String),
+        Column("amount_in", Numeric),
+        Column("amount_out", Numeric),
+        Column("peer_swaps", ARRAY(CompositeType("peer_swap_details", [
+            Column("amount_in", Numeric),
+            Column("asset_in", String),
+            Column("amount_out", Numeric),
+            Column("asset_out", String)
+        ])))]))
+    change_dns_record_data = Column(CompositeType("change_dns_record_details", [
+        Column("key", String),
+        Column("value_schema", String),
+        Column("value", String),
+        Column("flags", Integer)
+    ]))
+    event: Event = relationship("Event", back_populates="actions")
 
 
 class Transaction(Base):
@@ -196,23 +254,23 @@ class Transaction(Base):
     account_state_hash_after = Column(String)
 
     event_id: Optional[int] = Column(BigInteger)
-    account_state_before = relationship("AccountState", 
+    account_state_before = relationship("AccountState",
                                         foreign_keys=[account_state_hash_before],
-                                        primaryjoin="AccountState.hash == Transaction.account_state_hash_before", 
+                                        primaryjoin="AccountState.hash == Transaction.account_state_hash_before",
                                         viewonly=True)
-    account_state_after = relationship("AccountState", 
+    account_state_after = relationship("AccountState",
                                        foreign_keys=[account_state_hash_after],
-                                       primaryjoin="AccountState.hash == Transaction.account_state_hash_after", 
+                                       primaryjoin="AccountState.hash == Transaction.account_state_hash_after",
                                        viewonly=True)
-    account_state_latest = relationship("LatestAccountState", 
+    account_state_latest = relationship("LatestAccountState",
                                        foreign_keys=[account],
                                        primaryjoin="LatestAccountState.account == Transaction.account",
                                        lazy='selectin',
                                        viewonly=True)
     description = Column(JSONB)
-    
+
     messages: List["TransactionMessage"] = relationship("TransactionMessage", back_populates="transaction")
-    event: Optional["Event"] = relationship("Event", 
+    event: Optional["Event"] = relationship("Event",
                                   foreign_keys=[event_id],
                                   primaryjoin="Transaction.event_id == Event.id",
                                   viewonly=True)
@@ -249,29 +307,29 @@ class Message(Base):
     body_hash: str = Column(String(44))
     init_state_hash: Optional[str] = Column(String(44), nullable=True)
 
-    transactions = relationship("TransactionMessage", 
+    transactions = relationship("TransactionMessage",
                                 foreign_keys=[hash],
-                                primaryjoin="TransactionMessage.message_hash == Message.hash", 
+                                primaryjoin="TransactionMessage.message_hash == Message.hash",
                                 uselist=True,
                                 viewonly=True)
-    message_content = relationship("MessageContent", 
+    message_content = relationship("MessageContent",
                                    foreign_keys=[body_hash],
                                    primaryjoin="Message.body_hash == MessageContent.hash",
                                    viewonly=True)
-    init_state = relationship("MessageContent", 
+    init_state = relationship("MessageContent",
                               foreign_keys=[init_state_hash],
-                              primaryjoin="Message.init_state_hash == MessageContent.hash", 
+                              primaryjoin="Message.init_state_hash == MessageContent.hash",
                               viewonly=True)
-    
-    source_account_state = relationship("LatestAccountState", 
+
+    source_account_state = relationship("LatestAccountState",
                               foreign_keys=[source],
-                              primaryjoin="Message.source == LatestAccountState.account", 
+                              primaryjoin="Message.source == LatestAccountState.account",
                               lazy='selectin',
                               viewonly=True)
 
-    destination_account_state = relationship("LatestAccountState", 
+    destination_account_state = relationship("LatestAccountState",
                               foreign_keys=[destination],
-                              primaryjoin="Message.destination == LatestAccountState.account", 
+                              primaryjoin="Message.destination == LatestAccountState.account",
                               lazy='selectin',
                               viewonly=True)
 
@@ -285,13 +343,13 @@ class TransactionMessage(Base):
     transaction: "Transaction" = relationship("Transaction", back_populates="messages")
     # message = relationship("Message", back_populates="transactions")
     message: "Message" = relationship("Message", foreign_keys=[message_hash],
-                                      primaryjoin="TransactionMessage.message_hash == Message.hash", 
+                                      primaryjoin="TransactionMessage.message_hash == Message.hash",
                                       viewonly=True)
 
 
 class MessageContent(Base):
     __tablename__ = 'message_contents'
-    
+
     hash: str = Column(String(44), primary_key=True)
     body: str = Column(String)
 
@@ -316,7 +374,7 @@ class JettonWallet(Base):
                                              foreign_keys=[address],
                                              primaryjoin="JettonWallet.address == JettonBurn.jetton_wallet_address",
                                              viewonly=True)
-    
+
     jetton_master: "JettonMaster" = relationship("JettonMaster",
                                                  foreign_keys=[jetton],
                                                  primaryjoin="JettonWallet.jetton == JettonMaster.address")
@@ -401,10 +459,10 @@ class NFTItem(Base):
     code_hash = Column(String)
     data_hash = Column(String)
 
-    collection: Optional[NFTCollection] = relationship('NFTCollection', 
+    collection: Optional[NFTCollection] = relationship('NFTCollection',
                                                        foreign_keys=[collection_address],
                                                        primaryjoin="NFTCollection.address == NFTItem.collection_address",)
-    
+
     transfers: List["NFTTransfer"] = relationship('NFTTransfer',
                                                   foreign_keys=[address],
                                                   primaryjoin="NFTItem.address == NFTTransfer.nft_item_address",)
