@@ -19,5 +19,4 @@ pymongo
 msgpack
 contextvars
 redis
-multiprocessing
 argparse
