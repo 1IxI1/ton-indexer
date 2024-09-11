@@ -175,6 +175,7 @@ async def process_trace(trace: Trace) -> tuple[str, str, list[Action]]:
                 actions.append(action)
         return trace.trace_id, state, actions
     except Exception as e:
+        logger.exception(e, exc_info=True)
         logger.error("Marking trace as failed " + trace.trace_id + " - " + str(e))
         return trace.trace_id, 'failed', []
 
