@@ -13,10 +13,11 @@ SQLAlchemy-Utils==0.41.1
 requests==2.31.0
 pytonlib==0.0.51
 httpx==0.25.2
+redis<4.4
+hiredis
 tqdm
 pytoniq-core
 pymongo
 msgpack
 contextvars
-redis
 argparse
