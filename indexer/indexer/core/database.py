@@ -266,6 +266,9 @@ class Action(Base):
     nft_mint_data = Column(CompositeType("nft_mint_details", [
         Column("nft_item_index", Numeric)]))
 
+    action_tx_hashes: List["ActionTransactionHash"] = relationship(
+        "ActionTransactionHash", back_populates="action")
+
     def __repr__(self):
         full_repr = ""
         for key, value in self.__dict__.items():
@@ -273,6 +276,15 @@ class Action(Base):
                 continue
             full_repr += f"{key}={value}, "
         return full_repr
+
+
+class ActionTransactionHash(Base):
+    __tablename__ = 'action_tx_hashes'
+
+    action_id: str = Column(String, ForeignKey('actions.action_id'), primary_key=True)
+    tx_hash: str = Column(String(44), primary_key=True)
+    action = relationship("Action", back_populates="action_tx_hashes")
+
 
 class Transaction(Base):
     __tablename__ = 'transactions'

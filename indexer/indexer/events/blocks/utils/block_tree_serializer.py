@@ -6,7 +6,7 @@ import random
 from typing import Tuple, List
 
 from indexer.events.blocks.utils import AccountId, Asset
-from indexer.core.database import Action
+from indexer.core.database import Action, ActionTransactionHash
 from indexer.events.blocks.basic_blocks import CallContractBlock, TonTransferBlock
 from indexer.events.blocks.core import Block
 from indexer.events.blocks.dns import ChangeDnsRecordBlock, DeleteDnsRecordBlock
@@ -267,5 +267,7 @@ def block_to_action(block: Block, trace_id: str) -> Action:
             _fill_election_action(block, action)
         case 'auction_bid':
             _fill_auction_bid_action(block, action)
+    for tx_hash in action.tx_hashes:
+        action.action_tx_hashes.append(ActionTransactionHash(tx_hash=tx_hash, action_id=action.action_id))
 
     return action
