@@ -4,23 +4,22 @@ import logging
 import multiprocessing as mp
 import sys
 import time
-import threading
+from decimal import Decimal
 
-from queue import Queue
-
-from sqlalchemy import update, select
+import msgpack
+from sqlalchemy import update, select, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker, contains_eager
 
 from indexer.core import redis
-from indexer.core.database import engine, Trace, Transaction, Message, Action, TraceEdge, SyncSessionMaker
+from indexer.core.database import engine, Trace, Transaction, Message, Action, SyncSessionMaker
 from indexer.core.settings import Settings
 from indexer.events import context
 from indexer.events.blocks.utils.block_tree_serializer import block_to_action
 from indexer.events.blocks.utils.event_deserializer import deserialize_event
 from indexer.events.event_processing import process_event_async
-from indexer.events.interface_repository import EmulatedTransactionsInterfaceRepository, gather_interfaces, \
-    RedisInterfaceRepository
+from indexer.events.interface_repository import gather_interfaces, \
+    RedisInterfaceRepository, gather_interfaces_for_emulated_trace
 
 async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -104,12 +103,41 @@ async def start_emulated_traces_processing():
             await asyncio.sleep(1)
 
 
-async def process_emulated_trace(trace_id):
+async def process_emulated_trace(trace_id: str):
     trace_map = await redis.client.hgetall(trace_id)
     trace_map = dict((str(key, encoding='utf-8'), value) for key, value in trace_map.items())
-    trace = deserialize_event(trace_id, trace_map)
-    context.interface_repository.set(EmulatedTransactionsInterfaceRepository(trace_map))
-    return await process_event_async(trace)
+    interface_data = gather_interfaces_for_emulated_trace(trace_map)
+    try:
+        trace = deserialize_event(trace_id, trace_map)
+        repository = RedisInterfaceRepository(redis.sync_client)
+        await repository.put_interfaces(interface_data)
+        context.interface_repository.set(repository)
+        _, status, actions = await process_trace(trace)
+        if status == 'ok':
+            serialized_actions = [action_to_dict(action) for action in actions]
+            await redis.client.hset(trace_id, 'actions', msgpack.packb(serialized_actions))
+        else:
+            logger.error(f"Failed to process emulated trace {trace_id}: {status}")
+
+    except Exception as e:
+        logger.error("Failed to deserialize trace " + trace_id)
+        logger.exception(e)
+    return
+
+
+def action_to_dict(action: Action) -> dict:
+    data = {}
+    for attr in inspect(action).mapper.column_attrs:
+        key = attr.key
+        value = getattr(action, key)
+        if isinstance(value, Decimal):
+            data[key] = float(value)
+        elif hasattr(value, '__dict__'):
+            # Convert composite types to dict
+            data[key] = {k: getattr(value, k) for k in value.__dict__ if not k.startswith('_')}
+        else:
+            data[key] = value
+    return data
 
 
 def fetch_events_for_processing(queue: mp.Queue, fetch_size: int):

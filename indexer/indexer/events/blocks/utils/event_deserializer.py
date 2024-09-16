@@ -169,7 +169,7 @@ def deserialize_event(trace_id, packed_transactions_map: dict[str, bytes]) -> Tr
 
     def load_leaf(tx):
         for msg in tx.messages:
-            if msg.direction != 'out':
+            if msg.direction != 'out' or msg.destination is None:
                 continue
             child_tx = unpack_messagepack_tx(packed_transactions_map[msg.msg_hash])
             edges.append(TraceEdge(left_tx=tx.hash, right_tx=child_tx.hash, msg_hash=msg.msg_hash, trace_id=trace_id))

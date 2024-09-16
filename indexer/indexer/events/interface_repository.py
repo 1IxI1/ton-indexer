@@ -130,7 +130,8 @@ class RedisInterfaceRepository(InterfaceRepository):
             return None
 
         interfaces = msgpack.unpackb(raw_data, raw=False)
-        interface_data = next((data for (interface_type, data) in interfaces.items() if interface_type == "JettonWallet"), None)
+        interface_data = next(
+            (data for (interface_type, data) in interfaces.items() if interface_type == "JettonWallet"), None)
         if interface_data is not None:
             return JettonWallet(
                 balance=interface_data["balance"],
@@ -146,7 +147,8 @@ class RedisInterfaceRepository(InterfaceRepository):
             return None
 
         interfaces = msgpack.unpackb(raw_data, raw=False)
-        interface_data = next((data for (interface_type, data) in interfaces.items() if interface_type == "NftItem"), None)
+        interface_data = next((data for (interface_type, data) in interfaces.items() if interface_type == "NftItem"),
+                              None)
         if interface_data is not None:
             return NFTItem(
                 address=interface_data["address"],
@@ -164,7 +166,8 @@ class RedisInterfaceRepository(InterfaceRepository):
             return None
 
         interfaces = msgpack.unpackb(raw_data, raw=False)
-        interface_data = next((data for (interface_type, data) in interfaces.items() if interface_type == "NftSale"), None)
+        interface_data = next((data for (interface_type, data) in interfaces.items() if interface_type == "NftSale"),
+                              None)
         if interface_data is not None:
             return NftSale(
                 address=interface_data["address"],
@@ -341,4 +344,47 @@ async def gather_interfaces(accounts: set[str], session: AsyncSession) -> dict[s
             "nft_addr": auction.nft_addr,
             "nft_owner": auction.nft_owner
         }
+    return result
+
+
+def gather_interfaces_for_emulated_trace(trace_map: dict[str, bytes]) -> dict[str, dict[str, dict]]:
+    result = defaultdict(dict)
+    addrs = [key for key in trace_map.keys() if ':' in key]
+    for key in addrs:
+        result[key] = {}
+    for key in addrs:
+        data = msgpack.unpackb(trace_map[key], raw=False)
+        interfaces = data[0]
+        for (interface_type, interface_data) in interfaces:
+            if interface_type == 0:
+                result[key]["JettonWallet"] = {
+                    "balance": interface_data[0],
+                    "address": interface_data[1],
+                    "owner": interface_data[2],
+                    "jetton": interface_data[3],
+                }
+            elif interface_type == 2:
+                result[key]["NftItem"] = {
+                    "address": interface_data[0],
+                    "init": interface_data[1],
+                    "index": interface_data[2],
+                    "collection_address": interface_data[3],
+                    "owner_address": interface_data[4],
+                    "content": interface_data[5],
+                }
+            elif interface_type == 4:
+                result[key]["NftSale"] = {
+                    "address": interface_data[0],
+                    "is_complete": interface_data[1],
+                    "marketplace_address": interface_data[3],
+                    "nft_address": interface_data[4],
+                    "nft_owner_address": interface_data[5],
+                    "full_price": interface_data[6],
+                }
+            elif interface_type == 5:
+                result[key]["NftAuction"] = {
+                    "address": interface_data[0],
+                    "nft_addr": interface_data[4],
+                    "nft_owner": interface_data[5],
+                }
     return result
