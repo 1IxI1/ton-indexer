@@ -190,6 +190,7 @@ type Message struct {
 	MessageContent       *MessageContent   `json:"message_content"`
 	InitState            *MessageContent   `json:"init_state"`
 	MsgHashNorm          *HashType         `json:"hash_norm,omitempty"`
+	IsCrossShard         *bool             `json:"is_cross_shard,omitempty"`
 } // @name Message
 
 type MsgSize struct {

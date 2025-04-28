@@ -43,11 +43,15 @@ void TraceEmulatorImpl::emulate(td::Ref<vm::Cell> in_msg, block::StdAddress addr
         return;
     }
     auto account = account_r.move_as_ok();
+    
     ton::UnixTime unixtime = 0;
+    std::vector<long long> wc0_shard_prefixes;
     for (auto& shard_state : context_.get_shard_states()) {
-        if (shard_state.blkid == block_id_) {
+        if (shard_state.blkid == block_id_ && unixtime == 0) {
             unixtime = shard_state.timestamp;
-            break;
+        }
+        if (!shard_state.blkid.is_masterchain()) {
+            wc0_shard_prefixes.push_back(shard_state.blkid.shard_full().shard);
         }
     }
     auto emulation_r = emulator_->emulate_transaction(std::move(account), in_msg, unixtime, lt, block::transaction::Transaction::tr_ord);

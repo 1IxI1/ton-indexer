@@ -1,6 +1,7 @@
 #include "TraceInserter.h"
 #include "Serializer.hpp"
 #include "Statistics.h"
+#include "td/utils/common.h"
 
 class TraceInserter: public td::actor::Actor {
 private:
@@ -22,6 +23,14 @@ public:
             std::vector<std::pair<std::string, std::string>> addr_keys_to_delete;
             std::vector<RedisTraceNode> flattened_trace;
 
+            // collect shard prefixes from all available blocks
+            std::vector<ton::ShardId> shard_prefixes;
+            for (const auto& shard_state : trace_.root->children) {
+                if (!shard_state->block_id.is_masterchain()) {
+                    shard_prefixes.push_back(shard_state->block_id.shard);
+                }
+            }
+
             queue.push(*trace_.root);
 
             while (!queue.empty()) {
@@ -31,7 +40,7 @@ public:
                     queue.push(*child);
                 }
 
-                auto redis_node_r = parse_trace_node(current);
+                auto redis_node_r = parse_trace_node(current, shard_prefixes);
                 if (redis_node_r.is_error()) {
                     promise_.set_error(redis_node_r.move_as_error_prefix("Failed to parse trace node: "));
                     stop();
@@ -40,7 +49,8 @@ public:
                 auto redis_node = redis_node_r.move_as_ok();
 
                 if (!current.emulated) {
-                    delete_db_subtree(td::base64_encode(redis_node.transaction.in_msg.value().hash.as_slice()), tx_keys_to_delete, addr_keys_to_delete);
+                    std::string incoming_msg_hash = td::base64_encode(redis_node.transaction.in_msg.value().hash.as_slice());
+                    delete_db_subtree(incoming_msg_hash, tx_keys_to_delete, addr_keys_to_delete);
                 }
 
                 flattened_trace.push_back(std::move(redis_node));

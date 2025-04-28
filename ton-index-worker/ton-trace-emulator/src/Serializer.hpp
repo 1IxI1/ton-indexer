@@ -167,8 +167,10 @@ struct Message {
 
   std::optional<td::Bits256> hash_norm;
 
+  std::optional<bool> is_cross_shard;
+
   MSGPACK_DEFINE(hash, source, destination, value, fwd_fee, ihr_fee, created_lt, created_at, 
-                 opcode, ihr_disabled, bounce, bounced, import_fee, body_boc, init_state_boc, hash_norm)
+                 opcode, ihr_disabled, bounce, bounced, import_fee, body_boc, init_state_boc, hash_norm, is_cross_shard)
 };
 
 struct BlockId {
@@ -567,8 +569,46 @@ td::Result<Transaction> parse_tx(td::Ref<vm::Cell> root, ton::WorkchainId workch
   return schema_tx;
 }
 
-td::Result<RedisTraceNode> parse_trace_node(const TraceNode& node) {
+td::Result<RedisTraceNode> parse_trace_node(const TraceNode& node, const std::vector<ton::ShardId>& shard_prefixes = {}) {
   TRY_RESULT(tx, parse_tx(node.transaction_root, node.address.workchain));
+  // detecting cross-shard messages
+  for (auto& out_msg : tx.out_msgs) {
+    out_msg.is_cross_shard = false; // default value
+    if (out_msg.source && out_msg.destination) {
+      // convert strings to StdAddress
+      block::StdAddress src_addr, dst_addr;
+      
+      // trying to parse addresses from strings
+      auto src_parse = block::StdAddress::parse(*out_msg.source);
+      auto dst_parse = block::StdAddress::parse(*out_msg.destination);
+      
+      if (src_parse.is_ok() && dst_parse.is_ok()) {
+        src_addr = src_parse.move_as_ok();
+        dst_addr = dst_parse.move_as_ok();
+        
+        // different workchains - always cross-shard
+        if (src_addr.workchain != dst_addr.workchain) {
+          out_msg.is_cross_shard = true;
+        } else {
+          // iterate over all shard prefixes,
+          // find shard to which src belongs
+          // if this shard contains dst then the message is intra-shard
+          ton::ShardId src_shard = 1e18;
+          for (auto shard_prefix : shard_prefixes) {
+            if (ton::shard_contains(shard_prefix, src_addr.addr)) {
+              src_shard = shard_prefix;
+              break;
+            }
+          }
+          if (src_shard == 1e18) {
+            return td::Status::Error("Failed to find shard for src address");
+          }
+          out_msg.is_cross_shard = !ton::shard_contains(src_shard, dst_addr.addr);
+        }
+      }
+    }
+  }
+  
   auto redis_blkid = BlockId{.workchain = node.block_id.workchain, 
                              .shard = node.block_id.shard, 
                              .seqno = node.block_id.seqno};
