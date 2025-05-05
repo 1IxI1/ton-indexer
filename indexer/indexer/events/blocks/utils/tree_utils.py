@@ -15,13 +15,14 @@ class NoMessageBodyException(Exception):
 
 class EventNode:
     def __init__(self, message: Message, children: list['EventNode'], is_tick_tock: bool = False,
-                 tick_tock_tx: Transaction = None):
+                 tick_tock_tx: Transaction = None, ghost_node: bool = False):
         self.message = message
         self.is_tick_tock = is_tick_tock
         self.tick_tock_tx = tick_tock_tx
         self.parent = None
         self.children = children
         self.handled = False
+        self.ghost_node = ghost_node
         if not is_tick_tock:
             self.emulated = message.transaction.emulated
             self.failed = message.transaction.aborted
@@ -79,6 +80,13 @@ class EventNode:
         else:
             return self.message.tx_lt
 
+    def get_utime(self):
+        if self.is_tick_tock and self.tick_tock_tx is not None:
+            return self.tick_tock_tx.now
+        elif self.message.created_lt is not None:
+            return self.message.created_at
+        else:
+            return self.message.transaction.now
 
 def to_tree(txs: list[Transaction]):
     txs = sorted(txs, key=lambda tx: tx.lt, reverse=True)
@@ -88,10 +96,13 @@ def to_tree(txs: list[Transaction]):
         """Helper function to create an EventNode from a transaction hash."""
         message = next((m for m in tx.messages if m.direction == "in"), None)
 
-        if message is None and tx.descr == "tick_tock":
-            return EventNode(None, [], is_tick_tock=True, tick_tock_tx=tx)
-        msg_tx[message.msg_hash] = tx.hash
-        return EventNode(message, [])
+        is_tick_tock = (tx.descr == "tick_tock")
+        if message is not None:
+            msg_tx[message.msg_hash] = tx.hash
+        if is_tick_tock:
+            return EventNode(message, [], is_tick_tock=True, tick_tock_tx=tx)
+        else:
+            return EventNode(message, [])
 
     for tx in txs:
         if tx.hash not in nodes:

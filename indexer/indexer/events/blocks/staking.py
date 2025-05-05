@@ -27,15 +27,17 @@ from indexer.events.blocks.messages.staking import (
 from indexer.events.blocks.nft import NftMintBlock
 from indexer.events.blocks.utils import AccountId, Amount
 from indexer.events.blocks.utils.block_utils import find_call_contract, get_labeled
+from indexer.events.blocks.utils.ton_utils import Asset
 
 
 @dataclass
 class TONStakersDepositData:
     source: AccountId
-    user_jetton_wallet: AccountId | None
+    user_jetton_wallet: AccountId
     pool: AccountId
     value: Amount
-    tokens_minted: Amount | None
+    tokens_minted: Amount
+    asset: Asset
 
 
 class TONStakersDepositBlock(Block):
@@ -54,8 +56,8 @@ class TONStakersWithdrawRequestData:
     tsTON_wallet: AccountId
     pool: AccountId
     tokens_burnt: Amount
-    minted_nft: AccountId | None
-
+    minted_nft: AccountId
+    asset: Asset
 
 class TONStakersWithdrawRequestBlock(Block):
     data: TONStakersWithdrawRequestData
@@ -71,8 +73,9 @@ class TONStakersWithdrawData:
     stake_holder: AccountId
     burnt_nft: AccountId | None
     pool: AccountId | None
+    tokens_burnt: Amount | None
     amount: Amount
-
+    asset: Asset
 
 class TONStakersWithdrawBlock(Block):
     data: TONStakersWithdrawData
@@ -149,11 +152,12 @@ class TONStakersDepositMatcher(BlockMatcher):
 
         new_block = TONStakersDepositBlock(
             data=TONStakersDepositData(
-                user_jetton_wallet=AccountId(transfer.get_message().destination) if transfer else None,
-                tokens_minted=Amount(transfer_message.amount) if transfer_message else None,
+                user_jetton_wallet=AccountId(transfer.get_message().destination) if not failed else None,
+                tokens_minted=Amount(transfer_message.amount) if not failed else None,
                 source=AccountId(msg.source),
                 pool=AccountId(msg.destination),
-                value=Amount(msg.value - 10**9),  # 1 TON deposit fee
+                value=Amount(msg.value - 10**9),  # 1 TON deposit fee,
+                asset=Asset(False, transfer.get_message().source)   
             )
         )
         new_block.failed = failed
@@ -190,20 +194,22 @@ class TONStakersWithdrawMatcher(BlockMatcher):
         immediate_withdrawal = get_labeled('immediate_withdrawal', other_blocks, CallContractBlock)
         delayed_withdrawal = get_labeled('delayed_withdrawal', other_blocks, CallContractBlock)
         request = get_labeled('request', other_blocks, CallContractBlock)
-        if not request or not (immediate_withdrawal or delayed_withdrawal):
-            return []
         failed = block.failed
+        asset = Asset(False, request.get_message().source)
 
         if immediate_withdrawal is not None:
+            value = immediate_withdrawal.get_message().value - immediate_withdrawal.previous_block.get_message().value
             new_block = TONStakersWithdrawBlock(
                 data=TONStakersWithdrawData(
                     stake_holder=AccountId(msg.source),
                     burnt_nft=None,
                     pool=AccountId(request.get_message().destination),
-                    amount=Amount(burn_request_data.amount),
+                    tokens_burnt=Amount(burn_request_data.amount),
+                    amount=Amount(value),
+                    asset=asset
                 )
             )
-        elif delayed_withdrawal is not None:
+        else:
             nft_mint_block = next((b for b in delayed_withdrawal.next_blocks if isinstance(b, NftMintBlock)), None)
             if nft_mint_block is None:
                 nft_mint_block = find_call_contract(delayed_withdrawal.next_blocks, TONStakersInitNFT.opcode)
@@ -218,11 +224,10 @@ class TONStakersWithdrawMatcher(BlockMatcher):
                     tsTON_wallet=AccountId(msg.destination),
                     pool=AccountId(request.get_message().destination),
                     tokens_burnt=Amount(burn_request_data.amount),
-                    minted_nft=minted_nft
+                    minted_nft=minted_nft,
+                    asset=asset
                 )
             )
-        else:
-            return []
         new_block.failed = failed
         new_block.merge_blocks([block] + other_blocks)
         return [new_block]
@@ -249,12 +254,40 @@ class TONStakersDelayedWithdrawalMatcher(BlockMatcher):
             data=TONStakersWithdrawData(
                 stake_holder=AccountId(notification_msg.owner),
                 burnt_nft=AccountId(notification.get_message().source),
-                pool=None,
-                amount=Amount(notification_msg.amount)
+                pool=self._try_find_pool_addr(notification),
+                amount=Amount(notification_msg.amount),
+                tokens_burnt=None,
+                asset=None
             )
         )
         new_block.merge_blocks([block] + other_blocks)
         return [new_block]
+
+    def _try_find_pool_addr(self, block: Block) -> AccountId | None:
+        try:
+            supported_opcodes = {
+                TONStakersNftBurnNotification.opcode,
+                TONStakersNftBurn.opcode,
+                TONStakersDistributedAsset.opcode
+            }
+
+            current_block = block
+            while True:
+                current_block = current_block.previous_block
+                if current_block is None:
+                    break
+                # if it is start asset distribution call
+                if isinstance(current_block, CallContractBlock) and current_block.opcode == 0x1140a64f:
+                    return AccountId(current_block.get_message().source)
+                if isinstance(current_block, TONStakersWithdrawBlock):
+                    return current_block.data.pool
+                if isinstance(current_block, CallContractBlock) and current_block.opcode in supported_opcodes:
+                    continue
+                break
+            return None
+        except Exception as e:
+            return None
+
 
 class NominatorPoolDepositMatcher(BlockMatcher):
     def __init__(self):

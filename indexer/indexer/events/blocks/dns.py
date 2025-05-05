@@ -7,26 +7,27 @@ from indexer.events.blocks.utils import AccountId
 from indexer.events.blocks.basic_blocks import CallContractBlock
 from indexer.events.blocks.basic_matchers import BlockMatcher, ContractMatcher
 from indexer.events.blocks.core import Block
+from indexer.events import context
 
 zero_key = b'\x00' * 32
 
-class DnsDeleteRecordBlock(Block):
+class DeleteDnsRecordBlock(Block):
     def __init__(self, data):
-        super().__init__('dns_delete', [], data)
+        super().__init__('delete_dns', [], data)
 
     def __repr__(self):
         return f"DELETE_DNS {self.event_nodes[0].message.transaction.hash}"
 
 class DnsRenewBlock(Block):
     def __init__(self, data):
-        super().__init__('dns_renew', [], data)
+        super().__init__('renew_dns', [], data)
 
     def __repr__(self):
         return f"DNS_RENEW {self.event_nodes[0].message.transaction.hash}"
 
-class DnsChangeRecordBlock(Block):
+class ChangeDnsRecordBlock(Block):
     def __init__(self, data):
-        super().__init__('dns_change', [], data)
+        super().__init__('change_dns', [], data)
 
     def __repr__(self):
         return f"CHANGE_DNS {self.event_nodes[0].message.transaction.hash}"
@@ -45,9 +46,10 @@ class ChangeDnsRecordMatcher(BlockMatcher):
         change_dns_message = ChangeDnsRecordMessage(Slice.one_from_boc(block.event_nodes[0].message.message_content.body))
         new_block = None
         sender = block.event_nodes[0].message.source
+        nft_item = await context.interface_repository.get().get_nft_item(block.event_nodes[0].message.destination)
 
         if change_dns_message.has_value:
-            new_block = DnsChangeRecordBlock({
+            new_block = ChangeDnsRecordBlock({
                 'source': AccountId(sender) if sender is not None else None,
                 'destination': AccountId(block.event_nodes[0].message.destination),
                 'key': change_dns_message.key,
@@ -60,11 +62,13 @@ class ChangeDnsRecordMatcher(BlockMatcher):
                     'destination': AccountId(block.event_nodes[0].message.destination),
                 })
             else:
-                new_block = DnsDeleteRecordBlock({
+                new_block = DeleteDnsRecordBlock({
                     'source': AccountId(sender) if sender is not None else None,
                     'destination': AccountId(block.event_nodes[0].message.destination),
                     'key': change_dns_message.key,
                 })
+        if nft_item is not None:
+            new_block.data['collection_address'] = AccountId(nft_item.collection_address)
         new_block.failed = block.failed
         new_block.merge_blocks([block] + other_blocks)
         return [new_block]
