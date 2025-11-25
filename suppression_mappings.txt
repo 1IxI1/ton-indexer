@@ -1,0 +1,4 @@
+# Compiler warning suppression mappings
+# Format: warning_category=suppression_level
+# This file is referenced by the TON CMakeLists.txt
+
