@@ -11,6 +11,10 @@ target_link_libraries(ton-index-clickhouse
         ton-observability
         clickhouse-cpp-lib)
 target_link_options(ton-index-clickhouse PUBLIC -rdynamic)
+if(TON_INDEXER_ANALYTICS)
+    target_link_libraries(ton-index-clickhouse ton-analytics-pipeline)
+    target_compile_definitions(ton-index-clickhouse PRIVATE TON_INDEXER_ANALYTICS=1)
+endif()
 
 
 install(TARGETS ton-index-clickhouse RUNTIME DESTINATION bin)

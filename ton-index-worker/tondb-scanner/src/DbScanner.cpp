@@ -320,6 +320,14 @@ void DbScanner::get_mc_block_handle(ton::BlockSeqno seqno, td::Promise<ton::vali
   td::actor::send_closure(db_, &RootDb::get_block_by_seqno, ton::AccountIdPrefixFull(ton::masterchainId, ton::shardIdAll), seqno, std::move(promise));
 }
 
+void DbScanner::fetch_archived_block_boc(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) {
+  if (!handle || !handle->id().is_valid_full()) {
+    promise.set_error(td::Status::Error("archived BoC requires a full-ID block handle"));
+    return;
+  }
+  td::actor::send_closure(db_, &RootDb::get_block_data, std::move(handle), std::move(promise));
+}
+
 void DbScanner::get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise) {
   td::actor::send_closure(db_, &RootDb::get_cell_db_reader, std::move(promise));
 }

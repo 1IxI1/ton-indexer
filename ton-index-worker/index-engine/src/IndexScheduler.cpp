@@ -146,6 +146,12 @@ const ton::BlockSeqno FIRST_INDEXABLE_MC_SEQNO = 1;
 //   point backwards. If no suitable state exists, the assembler is reset and
 //   the same bounded fallback is used.
 void IndexScheduler::run() {
+    if (analytics_ && analytics_->only) {
+        CHECK(is_bounded_archive_range() && from_seqno_ <= to_seqno_);
+        // Never consult the main database's skip list or resume row in replay.
+        start_from_seqno(prewarm_start_seqno(static_cast<ton::BlockSeqno>(from_seqno_)), true);
+        return;
+    }
     if (is_bounded_archive_range()) {
         LOG(INFO) << "Bounded archive indexing enabled: from=" << from_seqno_
                   << ", to=" << to_seqno_ << ", prewarm=" << prewarm_count_;
@@ -290,6 +296,9 @@ void IndexScheduler::start_from_seqno(ton::BlockSeqno seqno, bool reset_trace_as
         td::actor::send_closure(trace_assembler_, &TraceAssembler::reset_state);
     }
     read_from_seqno_ = static_cast<std::int32_t>(seqno);
+    if (analytics_) {
+        td::actor::send_closure(analytics_->processor, &IndexAnalytics::begin, seqno);
+    }
     last_known_seqno_ = read_from_seqno_ - 1;
     contiguous_indexed_seqno_ = read_from_seqno_ - 1;
     LOG(INFO) << "Starting indexing from seqno: " << read_from_seqno_;
@@ -535,6 +544,34 @@ void IndexScheduler::seqno_interfaces_processed(std::uint32_t mc_seqno, ParsedBl
 void IndexScheduler::seqno_actions_processed(std::uint32_t mc_seqno, ParsedBlockPtr parsed_block) {
     LOG(DEBUG) << "Actions processed for seqno " << mc_seqno;
     finish_seqno_otel_stage(mc_seqno);
+    if (analytics_) {
+        const bool emit = !is_bounded_archive_range() || mc_seqno >= static_cast<std::uint32_t>(from_seqno_);
+        // Keep this exact shared_ptr alive until the asynchronous processor acks.
+        // processing_seqnos_ still owns the task slot, bounding retained inputs.
+        auto P = td::PromiseCreator::lambda(
+            [SelfId = actor_id(this), mc_seqno, parsed_block](td::Result<td::Unit> R) mutable {
+                td::actor::send_closure(SelfId, &IndexScheduler::seqno_analytics_processed,
+                                       mc_seqno, std::move(parsed_block), std::move(R));
+            });
+        td::actor::send_closure(analytics_->processor, &IndexAnalytics::process,
+                               mc_seqno, parsed_block, emit, std::move(P));
+        return;
+    }
+    insert_processed_seqno(mc_seqno, std::move(parsed_block));
+}
+
+void IndexScheduler::seqno_analytics_processed(std::uint32_t mc_seqno, ParsedBlockPtr parsed_block,
+                                               td::Result<td::Unit> result) {
+    if (result.is_error()) {
+        ++analytics_->failures;
+        LOG(ERROR) << "Analytics pending for seqno " << mc_seqno << ": " << result.move_as_error();
+        // Analytics failure MUST NOT reschedule a legacy insert or advance an
+        // analytics cursor. The processor's durable pending record owns replay.
+    }
+    insert_processed_seqno(mc_seqno, std::move(parsed_block));
+}
+
+void IndexScheduler::insert_processed_seqno(std::uint32_t mc_seqno, ParsedBlockPtr parsed_block) {
     const auto* mc_block = find_masterchain_block(*parsed_block);
     const std::int32_t block_gen_utime = mc_block ? mc_block->gen_utime : 0;
     if (!should_insert_seqno(mc_seqno)) {

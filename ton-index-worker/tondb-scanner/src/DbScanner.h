@@ -45,6 +45,10 @@ public:
   void get_last_mc_seqno(td::Promise<ton::BlockSeqno> promise);
   void get_oldest_mc_seqno(td::Promise<ton::BlockSeqno> promise);
   void get_mc_block_handle(ton::BlockSeqno seqno, td::Promise<ton::validator::ConstBlockHandle> promise);
+  // Read only the archived, original block BoC. Does not open CellDB or load a state root.
+  // Caller must independently verify the full ID, SHA-256 of data(), and root hash.
+  void fetch_archived_block_boc(ton::validator::ConstBlockHandle handle,
+                                td::Promise<td::Ref<ton::validator::BlockData>> promise);
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise);
   void iterate_temp_block_handles(std::function<void(const ton::validator::BlockHandleInterface&)> f);
   void fetch_block_by_id(ton::BlockIdExt block_id, td::Promise<schema::BlockDataState> promise);

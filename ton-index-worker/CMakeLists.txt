@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PGTON "Enable adding the pgton subdirectory" OFF)
 option(TON_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
+option(TON_INDEXER_ANALYTICS "Build the opt-in existing IndexScheduler analytics stage/replay" OFF)
 
 # Find jemalloc
 if (TON_USE_JEMALLOC)
@@ -86,12 +87,50 @@ endfunction()
 add_ton_indexer_opentelemetry_cpp()
 
 add_subdirectory(tondb-scanner)
+option(TON_ANALYTICS_MC_BURN "Build standalone read-only archived MC burn reader" OFF)
+if(TON_ANALYTICS_MC_BURN)
+    add_subdirectory(ton-analytics-mc-burn EXCLUDE_FROM_ALL)
+endif()
+option(TON_ANALYTICS_NFT_NATIVE_TEST "Build pinned-TON NFT raw-message regression fixture" OFF)
+if(TON_ANALYTICS_NFT_NATIVE_TEST)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/tondb-scanner/test/assets_analytics/NftEvents.native.cmake")
+endif()
+add_subdirectory(ton-analytics-core EXCLUDE_FROM_ALL)
+add_subdirectory(ton-analytics EXCLUDE_FROM_ALL)
+option(TON_ANALYTICS_MONTH_FLOW "Build standalone opt-in raw monthly flow producer" OFF)
+if(TON_ANALYTICS_MONTH_FLOW)
+    add_subdirectory(ton-analytics-month-flow EXCLUDE_FROM_ALL)
+endif()
+add_subdirectory(ton-analytics-validators EXCLUDE_FROM_ALL)
+add_subdirectory(ton-analytics-wallets EXCLUDE_FROM_ALL)
+add_subdirectory(ton-analytics-assets EXCLUDE_FROM_ALL)
 add_subdirectory(ton-kvrocks-state)
 add_subdirectory(ton-marker)
 add_subdirectory(ton-observability)
+if(TON_INDEXER_ANALYTICS)
+    add_subdirectory(ton-analytics-pipeline)
+endif()
 add_subdirectory(ton-index-postgres)
 add_subdirectory(ton-index-clickhouse)
 add_subdirectory(ton-integrity-checker)
+add_subdirectory(ton-analytics-gram EXCLUDE_FROM_ALL)
+
+# Native analytics links the validator OBJECT target directly. Supply its Git
+# metadata and explicit block/VM and ADNL/DHT static-library ordering.
+set(TON_ANALYTICS_NATIVE_TARGETS
+    ton-analytics ton-analytics-gram ton-analytics-validators ton-analytics-assets
+    ton-analytics-assets-events-native ton-analytics-wallets-events)
+if (TON_WALLETS_TON_ADAPTER_AVAILABLE)
+    list(APPEND TON_ANALYTICS_NATIVE_TARGETS ton-analytics-wallets
+        test-ton-analytics-wallets-extractor test-ton-analytics-wallets-stage
+        test-ton-analytics-wallets-raw-inventory)
+endif()
+foreach(analytics_native_target IN LISTS TON_ANALYTICS_NATIVE_TARGETS)
+    if (TARGET ${analytics_native_target})
+        target_link_libraries(${analytics_native_target} PUBLIC ton_block ton_crypto git adnl dht)
+    endif()
+endforeach()
+
 add_subdirectory(ton-smc-scanner)
 add_subdirectory(ton-trace-emulator)
 add_subdirectory(ton-trace-task-emulator)
@@ -102,4 +141,3 @@ if (PGTON)
     message("Building pgton")
     add_subdirectory(pgton)
 endif()
-
