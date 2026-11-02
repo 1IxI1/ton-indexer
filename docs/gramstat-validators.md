@@ -106,7 +106,7 @@ export GRAMSTAT_SS_USER='gramstat_reader'
 # GRAMSTAT_CH_PASSWORD and GRAMSTAT_SS_PASSWORD supplied by the deployment environment.
 
 gramstat-aggregate --handlers validators,validator_geo --from 2026-10-21 --to 2026-10-31
-gramstat-aggregate --handlers actions,validators,validator_geo
+gramstat-aggregate --handlers actions,validators,validator_geo,staking
 ```
 
 Dates select overlapping rounds and cap the observation cutoff; `--to` is
@@ -120,8 +120,9 @@ handler before geo when both are requested.
 The destination runtime role needs `SELECT, INSERT` on both new tables and
 `SELECT` on the view for map readers. The SS role needs only source `SELECT`;
 queries additionally set `readonly=1` and resource limits. The example systemd
-unit runs all three handlers hourly. Source credentials and private infrastructure
+unit runs all four handlers hourly. Source credentials and private infrastructure
 hostnames must not be committed to this repository. Internal addresses use placeholders.
+See [staking](gramstat-staking.md) for the Elector history and stake breakdowns.
 
 ## Charts and map queries
 
