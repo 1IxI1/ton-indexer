@@ -86,10 +86,39 @@ def check_nft_history(binary, clickhouse):
     print("ClickHouse NFT owner history, replay and documented optional daily view: OK")
 
 
+def check_elector_history(binary, clickhouse):
+    schema = subprocess.check_output([binary, "--elector-schema"], text=True)
+    with tempfile.TemporaryDirectory(prefix="elector-ch-") as directory:
+        def run(sql, data=b""):
+            result = subprocess.run([clickhouse, "local", "--path", directory, "--multiquery", "--query", sql],
+                                    input=data, capture_output=True, timeout=90)
+            assert result.returncode == 0, (result.stdout + result.stderr).decode()
+            return result.stdout.decode().strip()
+        def insert(option, table="elector_stake_states"):
+            data = subprocess.check_output([binary, option])
+            run(f"INSERT INTO {table} FORMAT Native", data)
+        run(schema)
+        insert("--elector-native")
+        insert("--elector-native")
+        assert run("SELECT count(),sum(stake) FROM elector_frozen_positions") == "2\t9007199254740993123456796"
+        assert run("SELECT weight,banned FROM elector_frozen_positions WHERE election_id=100") == "18446744073709551615\ttrue"
+        assert run("SELECT applications[1].total_stake,applications[1].participants[1].max_factor FROM elector_stake_states FINAL") == "9007199254740993123456789\t65536"
+        insert("--elector-native-unknown")
+        assert run("SELECT count() FROM elector_frozen_positions; SELECT complete FROM elector_stake_states FINAL") == "0\nfalse"
+        insert("--elector-native-empty")
+        assert run("SELECT complete,length(elections),length(applications) FROM elector_stake_states FINAL") == "true\t0\t0"
+        insert("--holder-native", "stake_holder_states")
+        assert run("SELECT kind,isNull(pool) FROM stake_holder_states FINAL") == "liquid_staking_controller\t0"
+        insert("--holder-native-unknown", "stake_holder_states")
+        assert run("SELECT kind,isNull(pool),error FROM stake_holder_states FINAL") == "unknown\t1\tgetter failed"
+    print("ClickHouse Elector typed Native columns, exact amounts and replay: OK")
+
+
 def main():
     binary, clickhouse = sys.argv[1:]
     check_jetton_history(binary, clickhouse)
     check_nft_history(binary, clickhouse)
+    check_elector_history(binary, clickhouse)
 
     def exported(option):
         return subprocess.check_output([binary, option], text=True)

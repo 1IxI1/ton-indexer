@@ -3,6 +3,9 @@
 #include "GramstatPostgres.h"
 #include "TokenStatesPostgres.h"
 #include "TokenStatesSchema.h"
+#include "ElectorSnapshotsSchema.h"
+#include "ElectorSnapshotsPostgres.h"
+#include "../../tondb-scanner/test/elector-fixture.h"
 #include "postgresql_tools.h"
 
 namespace {
@@ -159,6 +162,51 @@ void check_jetton_history(pqxx::connection& connection, pqxx::connection& observ
 
 }  // namespace
 
+void check_elector_history(pqxx::connection& connection, pqxx::connection& observer) {
+    { pqxx::work txn(connection); txn.exec0(staking_history::postgres::SCHEMA_SQL); txn.commit(); }
+    std::vector<InsertTaskStruct> tasks;
+    auto t=task(200,1788220800,"1");
+    t.parsed_block_->elector_snapshot_=test_elector_storage_snapshot(200);
+    t.parsed_block_->validator_set_state_=schema::ValidatorSetState{200,1788220800,"hash","boc"};
+    schema::StakeHolder holder;
+    holder.address=t.parsed_block_->elector_snapshot_->address;
+    holder.mc_seqno=200; holder.gen_utime=1788220800;
+    holder.kind="liquid_staking_controller"; holder.pool="0:"+std::string(64,'A');
+    t.parsed_block_->stake_holder_states_.push_back(holder);
+    tasks.push_back(std::move(t));
+    { pqxx::work txn(connection); staking_history::postgres::insert_states(txn,tasks);
+      CHECK(count(observer,"elector_stake_states")==0); }
+    CHECK(count(observer,"elector_stake_states")==0);
+    { pqxx::work txn(connection); staking_history::postgres::insert_states(txn,tasks);
+      staking_history::postgres::insert_states(txn,tasks);
+      CHECK(txn.query_value<std::string>("SELECT stake::text FROM elector_frozen_positions WHERE election_id=100")=="9007199254740993123456789");
+      CHECK(txn.query_value<std::string>("SELECT weight::text FROM elector_frozen_positions WHERE election_id=100")=="18446744073709551615");
+      CHECK(txn.query_value<long long>("SELECT count(*) FROM elector_frozen_elections")==2);
+      CHECK(txn.query_value<std::string>("SELECT total_stake::text FROM elector_applications")=="9007199254740993123456789");
+      CHECK(txn.query_value<long long>("SELECT max_factor FROM elector_application_participants")==65536);
+      CHECK(txn.query_value<std::string>("SELECT pool::text FROM stake_holder_states")==*holder.pool);
+      txn.commit(); }
+    auto& s=*tasks[0].parsed_block_->elector_snapshot_;
+    s.complete=false; s.error="failed"; s.elections.clear();
+    s.applications_complete=false; s.applications.reset();
+    auto& changed_holder=tasks[0].parsed_block_->stake_holder_states_[0];
+    changed_holder.kind="unknown"; changed_holder.pool.reset(); changed_holder.error="getter failed";
+    { pqxx::work txn(connection); staking_history::postgres::insert_states(txn,tasks);
+      CHECK(txn.query_value<long long>("SELECT count(*) FROM elector_frozen_positions")==0);
+      CHECK(txn.query_value<long long>("SELECT count(*) FROM elector_frozen_elections")==0);
+      CHECK(txn.query_value<long long>("SELECT count(*) FROM elector_stake_positions")==0);
+      CHECK(txn.query_value<long long>("SELECT count(*) FROM elector_applications")==0);
+      CHECK(txn.query_value<long long>("SELECT count(*) FROM elector_application_participants")==0);
+      CHECK(!txn.query_value<bool>("SELECT complete FROM elector_stake_states"));
+      CHECK(txn.query_value<bool>("SELECT pool IS NULL AND kind='unknown' AND error='getter failed' FROM stake_holder_states"));
+      txn.commit(); }
+    s.complete=true; s.error.clear();
+    { pqxx::work txn(connection); staking_history::postgres::insert_states(txn,tasks);
+      CHECK(txn.query_value<bool>("SELECT complete AND NOT EXISTS(SELECT 1 FROM elector_frozen_elections) FROM elector_stake_states"));
+      txn.commit(); }
+    CHECK(count(observer,"elector_stake_states")==1);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);  // The test runner supplies a fresh, private PostgreSQL cluster.
     pqxx::connection connection(argv[1]);
@@ -176,6 +224,7 @@ int main(int argc, char** argv) {
         txn.commit();
     }
     check_jetton_history(connection, observer);
+    check_elector_history(connection, observer);
     std::vector<InsertTaskStruct> tasks;
     tasks.push_back(task(101, 1788224399, "100000000000000000102"));
     tasks.push_back(task(100, 1788224399, "100000000000000000101"));
