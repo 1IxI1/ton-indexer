@@ -75,7 +75,7 @@ func run(log *slog.Logger) error {
 	registry := []gramstat.Handler{
 		&actions.Handler{Source: actions.Postgres{DSN: os.Getenv("GRAMSTAT_PG_DSN")}, Sink: ch, Log: log},
 		&validators.Handler{Source: validators.Postgres{DSN: os.Getenv("GRAMSTAT_PG_DSN")},
-			Verifier: validators.ConfigRPC{URL: strings.TrimRight(os.Getenv("GRAMSTAT_CONFIG_URL"), "/"), APIKey: os.Getenv("GRAMSTAT_CONFIG_API_KEY")},
+			Verifier: validators.IndexedConfig{DSN: os.Getenv("GRAMSTAT_PG_DSN")},
 			Sink:     validators.Store{CH: ch}, Log: log},
 		&validators.GeoHandler{Source: validators.SessionStats{URL: os.Getenv("GRAMSTAT_SS_URL"), User: os.Getenv("GRAMSTAT_SS_USER"), Password: os.Getenv("GRAMSTAT_SS_PASSWORD")},
 			Sink: validators.Store{CH: ch}, Log: log},
