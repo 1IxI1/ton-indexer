@@ -520,6 +520,9 @@ void IndexScheduler::seqno_traces_assembled(std::uint32_t mc_seqno, ParsedBlockP
 
 void IndexScheduler::seqno_interfaces_processed(std::uint32_t mc_seqno, ParsedBlockPtr parsed_block) {
     LOG(DEBUG) << "Interfaces processed for seqno " << mc_seqno;
+    // Record current locked stakes at the first masterchain block or an explicit
+    // --from boundary, even if Elector data is unchanged, so the history has an
+    // initial state before subsequent changes are recorded.
     parsed_block->elector_baseline_ = mc_seqno == 1 ||
         (from_seqno_ > 0 && mc_seqno == static_cast<std::uint32_t>(from_seqno_));
     auto history = account_history::collect_states(mc_seqno, *parsed_block);
