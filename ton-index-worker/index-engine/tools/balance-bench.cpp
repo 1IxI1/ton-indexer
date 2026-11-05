@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <iomanip>
 #include <iostream>
 #include "DbScanner.h"
@@ -29,9 +30,11 @@ bool equal(const schema::TotalSupply& a, const schema::TotalSupply& b) {
 class BalanceBench : public td::actor::Actor {
     Options options_;
     int& exit_code_;
+    std::shared_ptr<std::atomic_bool> finish_requested_;
     td::actor::ActorOwn<DbScanner> scanner_;
 public:
-    BalanceBench(Options options, int& exit_code) : options_(std::move(options)), exit_code_(exit_code) {}
+    BalanceBench(Options options, int& exit_code, std::shared_ptr<std::atomic_bool> finish_requested)
+        : options_(std::move(options)), exit_code_(exit_code), finish_requested_(std::move(finish_requested)) {}
     void start_up() override {
         scanner_ = td::actor::create_actor<DbScanner>("balance_bench_scanner", options_.db, dbs_secondary,
             std::optional<std::string>(options_.working_dir));
@@ -96,7 +99,7 @@ private:
         exit_code_ = result.is_ok() ? 0 : 1;
         if (result.is_error()) LOG(ERROR) << "Balance benchmark failed: " << result.error();
         scanner_.reset();
-        td::actor::SchedulerContext::get().stop();
+        finish_requested_->store(true);
         stop();
     }
 };
@@ -139,9 +142,15 @@ int main(int argc, char** argv) {
     }
     td::mkpath(options.working_dir + "/").ensure();
     int exit_code = 1;
+    auto finish_requested = std::make_shared<std::atomic_bool>(false);
     td::actor::ActorOwn<BalanceBench> runner;
     td::actor::Scheduler scheduler({td::actor::Scheduler::NodeInfo{options.threads, 1}});
-    scheduler.run_in_context([&] { runner = td::actor::create_actor<BalanceBench>("balance_bench", options, exit_code); });
-    while (scheduler.run(1)) {}
+    scheduler.run_in_context([&] { runner = td::actor::create_actor<BalanceBench>("balance_bench", options, exit_code, finish_requested); });
+    while (!finish_requested->load() && scheduler.run(1)) {}
+    scheduler.run_in_context([&] {
+        runner.reset();
+        td::actor::SchedulerContext::get().stop();
+    });
+    scheduler.run();
     return exit_code;
 }
