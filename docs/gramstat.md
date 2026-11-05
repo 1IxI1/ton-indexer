@@ -34,6 +34,65 @@ The native method excludes already-processed messages from outgoing queue
 balances. Its diagnostic `burned` field is not subtracted again. Missing inputs
 or calculation failures cause a retry rather than a partial or zero snapshot.
 
+### Incremental state preparation
+
+`TotalSupplyProcessor` orders the supply stage by MC seqno while the ordinary
+fetch/parse/interface pipeline remains parallel. It keeps the last successful
+MC and its shard tips as native `PreparedGlobalBalanceState` handles. Unchanged
+tips are reused; new states use their **immediate** predecessors. Intermediate
+shard blocks come from the pipeline's existing `shard_blocks_diff_` and are
+prepared in dependency layers, with independent shards in each layer running
+in parallel.
+
+This enables native `scan_diff` for legacy dispatch queues and `OutMsgDescr`
+updates for outgoing queues. Native split/merge behavior and outgoing queue hash
+checks remain authoritative. Outgoing-message balances are reevaluated against
+the current snapshot's `processed_upto`, even when their source shard is unchanged.
+
+Prewarm blocks and already-present rows advance the preparation cache before
+skipping insertion. Failed calculations do not advance it. Small completed
+results are retained until insertion acknowledgement (with a bounded fallback
+cache) for insert retries. An older retry whose result was evicted uses an
+isolated cold calculation and cannot roll the forward cache back. Startup,
+protocol-version changes and nonconsecutive standalone requests initialize a
+fresh anchor. A missing intermediate block during a consecutive step is an error.
+
+Prepared-state retention is bounded by current tips plus dependencies of the
+active MC, rather than the length of the historical run. The existing pipeline
+`--max-active-tasks` also bounds requests waiting for their MC turn.
+
+The native API is currently pinned through the temporary TON submodule branch
+`1IxI1/ton:ton-indexer-testnet-20261105`, which contains the rebased indexer patches
+and the API proposed in `ton-blockchain/ton#2619`.
+
+### Measurement and verification
+
+`stats.txt` includes `indexer.supply.prepare.micros`, `compute.micros` and
+`total.micros`, plus reused/cold/with-predecessor state counts and result-cache
+hits. Preparation time includes the expensive queue work; the native
+`Calculated global balance ... time=` line alone does not. `with_prev` counts
+preparations supplied with predecessors, not necessarily dispatch diffs: a
+stored augmentation or the native post-split fallback may be used internally.
+
+Build `gramstat-balance-bench` to measure against NodeDB without inserting rows:
+
+```sh
+cmake --build build --target gramstat-balance-bench
+build/ton-index-worker/index-engine/gramstat-balance-bench \
+  --db /path/to/node/db --working-dir /path/to/separate/secondary \
+  --from 100455164 --count 256 --mode verify > balances.csv
+```
+
+Modes: `verify` compares every monetary component of each incremental snapshot
+with the independent calculation; `full` runs only independent snapshots;
+`incremental` runs the cached path. The CSV includes fetch/preparation/final
+calculation/reference times, cache counters and exact amounts. The summary
+reports warm calculation p50/p95, excluding the initial cold anchor. For speed
+comparisons run `full` and `incremental` separately over the same range and
+resources; verification timings share already-read cells and are not an
+independent performance baseline. Use a separate secondary directory for every
+concurrent process.
+
 ## Storage
 
 `gramstat` is a database in ClickHouse and a schema in PostgreSQL. Each belongs

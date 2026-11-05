@@ -20,3 +20,6 @@ target_link_libraries(index-engine-core
         tondb-scanner
         ton-observability
         mch-classify)
+
+add_executable(gramstat-balance-bench EXCLUDE_FROM_ALL tools/balance-bench.cpp)
+target_link_libraries(gramstat-balance-bench PRIVATE index-engine-core)
