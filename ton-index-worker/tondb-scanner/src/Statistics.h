@@ -98,6 +98,10 @@ enum Ticker : uint32_t {
   EMULATE_SRC_REDIS,
   EMULATE_SRC_OVERLAY,
   EMULATE_SRC_BLOCKS,
+  SUPPLY_STATE_REUSED,
+  SUPPLY_STATE_COLD,
+  SUPPLY_STATE_WITH_PREV,
+  SUPPLY_RESULT_CACHE_HIT,
   TICKERS_COUNT
 };
 
@@ -132,6 +136,9 @@ enum Histogram : uint32_t {
   EMULATE_TRACE,
   CLASSIFY_TRACE,
   INSERT_TRACE,
+  SUPPLY_PREPARE,
+  SUPPLY_COMPUTE,
+  SUPPLY_TOTAL,
   
   HISTOGRAMS_COUNT
 };
@@ -145,7 +152,11 @@ const std::unordered_map<uint32_t, std::string_view> ticker_names = {
     {DB_EVENT_CATCH_UP, "indexer.db_event.catch_up"},
     {EMULATE_SRC_REDIS, "emulator.source.redis"},
     {EMULATE_SRC_OVERLAY, "emulator.source.overlay"},
-    {EMULATE_SRC_BLOCKS, "emulator.source.blocks"}
+    {EMULATE_SRC_BLOCKS, "emulator.source.blocks"},
+    {SUPPLY_STATE_REUSED, "indexer.supply.state.reused"},
+    {SUPPLY_STATE_COLD, "indexer.supply.state.cold"},
+    {SUPPLY_STATE_WITH_PREV, "indexer.supply.state.with_prev"},
+    {SUPPLY_RESULT_CACHE_HIT, "indexer.supply.result_cache_hit"}
 };
 const std::unordered_map<uint32_t, std::string_view> histogram_names = {
     {PROCESS_SEQNO, "indexer.index.seqno.millis"},
@@ -172,6 +183,9 @@ const std::unordered_map<uint32_t, std::string_view> histogram_names = {
     {EMULATE_TRACE, "emulator.emulate.trace.millis"},
     {CLASSIFY_TRACE, "emulator.classify.trace.micros"},
     {INSERT_TRACE, "emulator.insert.trace.millis"},
+    {SUPPLY_PREPARE, "indexer.supply.prepare.micros"},
+    {SUPPLY_COMPUTE, "indexer.supply.compute.micros"},
+    {SUPPLY_TOTAL, "indexer.supply.total.micros"},
 };
 
 class Statistics {

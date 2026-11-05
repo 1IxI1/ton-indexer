@@ -4,6 +4,7 @@ add_library(index-engine-core
         src/IndexScheduler.cpp
         src/BlockInterfacesDetector.cpp
         src/TotalSupply.cpp
+        src/TotalSupplyProcessor.cpp
         src/AccountDeltas.cpp
         src/Deployments.cpp
         src/AccountStateHistory.cpp

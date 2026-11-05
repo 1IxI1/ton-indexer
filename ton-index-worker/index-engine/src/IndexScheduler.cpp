@@ -299,6 +299,10 @@ void IndexScheduler::start_from_seqno(ton::BlockSeqno seqno, bool reset_trace_as
     LOG(INFO) << "Starting indexing from seqno: " << read_from_seqno_;
 
     td::actor::send_closure(trace_assembler_, &TraceAssembler::set_expected_seqno, seqno);
+    if (collect_gramstat_) {
+        supply_processor_ = td::actor::create_actor<gramstat::TotalSupplyProcessor>(
+            "total_supply", seqno, static_cast<std::size_t>(max_queue_.mc_blocks_) + max_active_tasks_);
+    }
     if (!db_event_fifo_path_.empty() && db_event_listener_.empty()) {
         LOG(INFO) << "Starting DB events listener on " << db_event_fifo_path_;
         db_event_listener_ = td::actor::create_actor<DbEventListener>("DbEventListener", db_event_fifo_path_,
@@ -551,7 +555,8 @@ void IndexScheduler::seqno_actions_processed(std::uint32_t mc_seqno, ParsedBlock
     finish_seqno_otel_stage(mc_seqno);
     const auto* mc_block = find_masterchain_block(*parsed_block);
     const std::int32_t block_gen_utime = mc_block ? mc_block->gen_utime : 0;
-    if (!should_insert_seqno(mc_seqno)) {
+    // Prewarm and existing rows still advance the supply cache in MC order.
+    if (!collect_gramstat_ && !should_insert_seqno(mc_seqno)) {
         seqno_processed_without_insert(mc_seqno, mc_seqno < static_cast<std::uint32_t>(from_seqno_) ? "prewarm" : "already_present", block_gen_utime);
         return;
     }
@@ -583,7 +588,23 @@ void IndexScheduler::seqno_actions_processed(std::uint32_t mc_seqno, ParsedBlock
             -> td::actor::Task<td::Ref<ton::validator::ShardState>> {
             co_return co_await td::actor::ask(scanner, &DbScanner::fetch_state_by_id, id);
         };
-        td::connect(std::move(P), gramstat::calculate_total_supply(parsed_block->mc_block_, std::move(load_state)));
+        std::optional<ton::BlockIdExt> mc_id;
+        for (const auto& entry : parsed_block->mc_block_.shard_blocks_) {
+            if (entry.block_data.not_null() && entry.block_data->block_id().is_masterchain()) {
+                mc_id = entry.block_data->block_id();
+                break;
+            }
+        }
+        if (!mc_id || mc_id->seqno() != mc_seqno) {
+            P.set_error(td::Status::Error("Total supply request has no matching masterchain block"));
+            return;
+        }
+        auto calculate = [blocks = parsed_block->mc_block_, load_state = std::move(load_state)](
+                             gramstat::SupplyCache previous) {
+            return gramstat::calculate_incremental_supply(blocks, load_state, std::move(previous));
+        };
+        td::actor::send_closure(supply_processor_, &gramstat::TotalSupplyProcessor::submit,
+                               *mc_id, std::move(calculate), std::move(P));
         return;
     }
     insert_seqno(mc_seqno, std::move(parsed_block));
@@ -606,6 +627,12 @@ void IndexScheduler::seqno_supply_processed(std::uint32_t mc_seqno, ParsedBlockP
     }
     parsed_block->total_supply_ = result.move_as_ok();
     finish_seqno_otel_stage(mc_seqno);
+    if (!should_insert_seqno(mc_seqno)) {
+        seqno_processed_without_insert(mc_seqno,
+            mc_seqno < static_cast<std::uint32_t>(from_seqno_) ? "prewarm" : "already_present",
+            static_cast<std::int32_t>(parsed_block->total_supply_->gen_utime));
+        return;
+    }
     insert_seqno(mc_seqno, std::move(parsed_block));
 }
 
@@ -642,6 +669,9 @@ void IndexScheduler::insert_seqno(std::uint32_t mc_seqno, ParsedBlockPtr parsed_
 }
 
 void IndexScheduler::seqno_processed_without_insert(std::uint32_t mc_seqno, const char* reason, std::int32_t block_gen_utime) {
+    if (!supply_processor_.empty()) {
+        td::actor::send_closure(supply_processor_, &gramstat::TotalSupplyProcessor::forget, mc_seqno);
+    }
     LOG(DEBUG) << "Processed seqno " << mc_seqno << " without insert: " << reason;
     set_seqno_otel_attribute(mc_seqno, "ton.indexer.insert.skipped", true, true);
     set_seqno_otel_attribute(mc_seqno, "ton.indexer.insert.skip_reason", std::string(reason), true);
@@ -751,6 +781,9 @@ void IndexScheduler::set_seqno_otel_attribute(std::uint32_t mc_seqno, const std:
 }
 
 void IndexScheduler::seqno_inserted(std::uint32_t mc_seqno, std::int32_t block_gen_utime) {
+    if (!supply_processor_.empty()) {
+        td::actor::send_closure(supply_processor_, &gramstat::TotalSupplyProcessor::forget, mc_seqno);
+    }
     finish_seqno_otel_stage(mc_seqno);
     finish_seqno_otel_trace(mc_seqno);
     note_indexed_block_utime(block_gen_utime);

@@ -25,6 +25,7 @@
 void print_validator_schema();
 void print_validator_fixture(bool corrected);
 void check_validator_storage();
+void check_incremental_supply();
 
 namespace {
 
@@ -761,6 +762,7 @@ int main(int argc, char** argv) {
     CHECK(result_block[6]->As<clickhouse::ColumnUInt64>()->At(0) == 9007199254740993ULL);
     check_amounts_and_columns();
     check_incomplete_input();
+    check_incremental_supply();
     check_block_fees();
     check_block_value_flow();
     check_account_deltas();
